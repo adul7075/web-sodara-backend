@@ -2,10 +2,10 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration
-{
+return new class extends Migration {
     public function up(): void
     {
         Schema::create('cache', function (Blueprint $table) {
@@ -79,13 +79,10 @@ return new class extends Migration
             $table->integer('initial_price_per_m');
             $table->integer('final_price_per_m')->nullable();
             $table->integer('total_price')->nullable();
-            $table->enum('statusjob', [
-                'pending', 'survey', 'price_fixation', 'material_buy',
-                'in_production', 'progress_reported', 'installation', 'completed',
-            ])->default('pending');
+            $table->enum('statusjob', ['pending','survey','price_fixation','material_buy','in_production','progress_reported','installation','completed'])->default('pending');
             $table->timestamps();
             $table->integer('product_id')->default(0);
-            // Dump asal hanya membuat index; tidak mendefinisikan foreign key di tabel orders.
+            // Sesuai dump: index saja, tidak ada FK pada tabel orders.
             $table->index('customer_id', 'orders_customer_id_foreign');
         });
 
@@ -99,16 +96,11 @@ return new class extends Migration
             $table->integer('initial_price_per_m');
             $table->integer('final_price_per_m')->nullable();
             $table->integer('total_price')->nullable();
-            $table->enum('statusjob', [
-                'pending', 'survey', 'price_fixation', 'material_buy',
-                'in_production', 'progress_reported', 'installation', 'completed',
-            ])->default('pending');
+            $table->enum('statusjob', ['pending','survey','price_fixation','material_buy','in_production','progress_reported','installation','completed'])->default('pending');
             $table->timestamps();
             $table->integer('product_id')->default(0);
-            $table->foreign('customer_id')
-                ->references('id')->on('customers')
-                ->cascadeOnDelete();
-            $table->index('customer_id', 'orders_reals_customer_id_index');
+            $table->foreign('customer_id', 'orders_reals_customer_id_foreign')
+                ->references('id')->on('customers')->cascadeOnDelete();
         });
 
         Schema::create('password_reset_tokens', function (Blueprint $table) {
@@ -148,7 +140,7 @@ return new class extends Migration
         Schema::create('promotions', function (Blueprint $table) {
             $table->id();
             $table->integer('cluster');
-            $table->enum('type', ['discount', 'cross']);
+            $table->enum('type', ['discount','cross']);
             $table->unsignedBigInteger('product_id');
             $table->decimal('discount', 5, 2)->nullable();
             $table->unsignedBigInteger('cross_product_id')->nullable();
@@ -161,7 +153,7 @@ return new class extends Migration
 
         Schema::create('sessions', function (Blueprint $table) {
             $table->string('id')->primary();
-            $table->foreignId('user_id')->nullable()->index('sessions_user_id_index');
+            $table->unsignedBigInteger('user_id')->nullable()->index('sessions_user_id_index');
             $table->string('ip_address', 45)->nullable();
             $table->text('user_agent')->nullable();
             $table->longText('payload');
@@ -174,15 +166,49 @@ return new class extends Migration
             $table->string('email')->unique();
             $table->timestamp('email_verified_at')->nullable();
             $table->string('password');
-            $table->enum('role_type', ['admin', 'user', 'pembeli'])->default('pembeli');
+            $table->enum('role_type', ['admin','user','pembeli'])->default('pembeli');
             $table->rememberToken();
             $table->timestamps();
             $table->integer('id_pelanggan')->nullable();
         });
+
+        // Hapus view lama bila ada, lalu buat ulang berdasarkan definisi dari dump.
+        DB::statement('DROP VIEW IF EXISTS customer_transaction_with_cluster');
+        DB::statement('DROP VIEW IF EXISTS customer_transaction_summary');
+
+        DB::statement(<<<'SQL'
+            CREATE VIEW customer_transaction_summary AS
+            SELECT c.id AS customer_id, c.name AS customer_name,
+                   COUNT(o.id) AS total_transaksi, SUM(o.luas) AS total_luas,
+                   SUM(o.total_price) AS total_spending,
+                   AVG(o.final_price_per_m) AS avg_price
+            FROM customers c
+            INNER JOIN orders o ON o.customer_id = c.id
+            GROUP BY c.id, c.name
+        SQL);
+
+        DB::statement(<<<'SQL'
+            CREATE VIEW customer_transaction_with_cluster AS
+            SELECT v.customer_id, v.customer_name, v.total_transaksi,
+                   v.total_luas, v.total_spending, v.avg_price,
+                   cr.cluster AS cluster
+            FROM (
+                SELECT c.id AS customer_id, c.name AS customer_name,
+                       COUNT(o.id) AS total_transaksi, SUM(o.luas) AS total_luas,
+                       SUM(o.total_price) AS total_spending,
+                       AVG(o.final_price_per_m) AS avg_price
+                FROM customers c
+                INNER JOIN orders o ON o.customer_id = c.id
+                GROUP BY c.id, c.name
+            ) v
+            LEFT JOIN cluster_results cr ON cr.customer_id = v.customer_id
+        SQL);
     }
 
     public function down(): void
     {
+        DB::statement('DROP VIEW IF EXISTS customer_transaction_with_cluster');
+        DB::statement('DROP VIEW IF EXISTS customer_transaction_summary');
         Schema::dropIfExists('sessions');
         Schema::dropIfExists('promotions');
         Schema::dropIfExists('products');
@@ -198,5 +224,6 @@ return new class extends Migration
         Schema::dropIfExists('cluster_results');
         Schema::dropIfExists('cache_locks');
         Schema::dropIfExists('cache');
+        Schema::dropIfExists('users');
     }
 };
